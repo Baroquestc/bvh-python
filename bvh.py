@@ -1,6 +1,5 @@
 import re
 
-
 class BvhNode:
 
     def __init__(self, value=[], parent=None):
@@ -42,22 +41,28 @@ class BvhNode:
 
 
 class Bvh:
-
     def __init__(self, data):
         self.data = data
         self.root = BvhNode()
         self.frames = []
-        self.tokenize()
+        self.hierarchy_lines = []
+        # self.tokenize()
+        self.parser()
 
     def tokenize(self):
-        first_round = []
-        accumulator = ''
-        for char in self.data:
-            if char not in ('\n', '\r'):
-                accumulator += char
-            elif accumulator:
-                    first_round.append(re.split('\\s+', accumulator.strip()))
-                    accumulator = ''
+        # first_round = []
+        # accumulator = ''
+        # print('len(self.data)', len(self.data.splitlines()))
+        # for char in self.data:
+        #     if char not in ('\n', '\r'):
+        #         accumulator += char
+        #     elif accumulator:
+        #             first_round.append(re.split('\\s+', accumulator.strip()))
+        #             accumulator = ''
+
+        lines = self.data.splitlines()
+        first_round = [line.split() for line in lines]
+           
         node_stack = [self.root]
         frame_time_found = False
         node = None
@@ -75,6 +80,51 @@ class Bvh:
                 node_stack[-1].add_child(node)
             if item[0] == 'Frame' and item[1] == 'Time:':
                 frame_time_found = True
+        
+    def parser(self):
+        motion_idx = 0
+        self.data = self.data.splitlines()
+
+        node_stack = [self.root]
+        node = None
+        for i, line in enumerate(self.data):
+            key = line.split()[0]
+            if key == '{':
+                node_stack.append(node)
+            elif key == '}':
+                node_stack.pop()
+            else:
+                node = BvhNode(line.split())
+                node_stack[-1].add_child(node)
+
+            if line.strip().upper().startswith("MOTION"):
+                motion_idx = i
+                continue
+            if line.startswith("Frames:"):
+                frames_count = int(line.split(":")[1].strip())
+                continue
+            if line.startswith("Frame Time:"):
+                frame_time = float(line.split(":")[1].strip())
+                motion_start_idx = i + 1
+                break
+
+        self.hierarchy_lines = self.data[:motion_idx]
+        motion_lines = self.data[motion_start_idx:]
+
+        for idx in range(frames_count):
+            frame = motion_lines[idx].split()
+            frame = list(map(float, frame))
+            self.frames.append(frame)
+
+    def as_bvh(self):
+        hierarchy = '\n'.join(self.hierarchy_lines) + '\n'
+        motion = 'MOTION\n'
+        motion += 'Frames: {}\n'.format(len(self.frames))
+        motion += 'Frame Time: {}\n'.format(self.frame_time)
+        for frame in self.frames:
+            motion += ' '.join(map(str, frame)) + '\n'
+
+        return hierarchy + motion
 
     def search(self, *items):
         found_nodes = []
@@ -93,6 +143,22 @@ class Bvh:
         check_children(self.root)
         return found_nodes
 
+    # 返回一个DataFrame对象，包含所有关节的通道数据
+    # 每个关节的通道数据以"joint_name_channel"的形式命名
+    def get_DataFrame(self):
+        import pandas as pd
+
+        column_names = []
+        for joint in self.get_joints():
+            channels = self.joint_channels(joint.name)
+            for channel in channels:
+                column_names.append(f"{joint.name}_{channel}")
+        # 创建一个DataFrame来存储关节数据
+        joint_data = pd.DataFrame(self.frames, columns=column_names)
+
+        return joint_data
+
+    # 返回所有joints对象
     def get_joints(self):
         joints = []
 
@@ -103,6 +169,7 @@ class Bvh:
         iterate_joints(next(self.root.filter('ROOT')))
         return joints
 
+    # 返回所有joints名称
     def get_joints_names(self):
         joints = []
 
@@ -113,13 +180,16 @@ class Bvh:
         iterate_joints(next(self.root.filter('ROOT')))
         return joints
 
+    # 获取所有直接子关节
     def joint_direct_children(self, name):
         joint = self.get_joint(name)
         return [child for child in joint.filter('JOINT')]
 
+    # 获取关节索引
     def get_joint_index(self, name):
         return self.get_joints().index(self.get_joint(name))
 
+    # 获取关节对象
     def get_joint(self, name):
         found = self.search('ROOT', name)
         if not found:
@@ -128,15 +198,18 @@ class Bvh:
             return found[0]
         raise LookupError('joint not found')
 
+    # 获取关节offset
     def joint_offset(self, name):
         joint = self.get_joint(name)
         offset = joint['OFFSET']
         return (float(offset[0]), float(offset[1]), float(offset[2]))
 
+    # 获取关节通道
     def joint_channels(self, name):
         joint = self.get_joint(name)
         return joint['CHANNELS'][1:]
 
+    # 获取关节通道索引
     def get_joint_channels_index(self, joint_name):
         index = 0
         for joint in self.get_joints():
@@ -145,6 +218,7 @@ class Bvh:
             index += int(joint['CHANNELS'][0])
         raise LookupError('joint not found')
 
+    # 获取关节通道索引
     def get_joint_channel_index(self, joint, channel):
         channels = self.joint_channels(joint)
         if channel in channels:
@@ -152,7 +226,27 @@ class Bvh:
         else:
             channel_index = -1
         return channel_index
-        
+    
+    def get_joint_global_channel_index(self, joint, channels=None):
+        if channels is None:
+            channels = self.joint_channels(joint)
+
+        if isinstance(channels, str):
+            channels = [channels]
+
+        if not isinstance(channels, list):
+            raise TypeError('channels must be a list or a string')
+
+        joint_index = self.get_joint_channels_index(joint)
+        channel_indices = []
+        for ch in channels:
+            channel_index = self.get_joint_channel_index(joint, ch)
+            if channel_index == -1:
+                raise LookupError(f'channel {ch} not found in joint {joint}')
+            channel_indices.append(joint_index + channel_index)
+
+        return channel_indices
+
     def frame_joint_channel(self, frame_index, joint, channel, value=None):
         joint_index = self.get_joint_channels_index(joint)
         channel_index = self.get_joint_channel_index(joint, channel)
@@ -176,6 +270,24 @@ class Bvh:
         return values
 
     def frames_joint_channels(self, joint, channels, value=None):
+        all_frames = []
+        joint_index = self.get_joint_channels_index(joint)
+        for frame in self.frames:
+            values = []
+            for channel in channels:
+                channel_index = self.get_joint_channel_index(joint, channel)
+                if channel_index == -1 and value is not None:
+                    values.append(value)
+                else:
+                    values.append(
+                        float(frame[joint_index + channel_index]))
+            all_frames.append(values)
+        return all_frames
+
+    def frames_joint(self, joint, channels=None, value=None):
+        if channels is None:
+            channels = self.joint_channels(joint)
+            
         all_frames = []
         joint_index = self.get_joint_channels_index(joint)
         for frame in self.frames:
