@@ -5,7 +5,7 @@ import numpy as np
 if __name__ == "__main__":
     # Example usage
     # 1. Load a BVH file
-    idle_data = Path('./tests/LJ_NV_DBJJ_1_001.bvh').read_text(encoding='utf-8')
+    idle_data = Path('./tests/idle.bvh').read_text(encoding='utf-8')
     bvh = Bvh(idle_data)
     print("Number of frames:", bvh.nframes)
 
@@ -59,3 +59,22 @@ if __name__ == "__main__":
     print(bvh.get_joint_index("spine_01"))
     print(bvh.get_joint_index("thigh_r"))
     print(bvh.get_joint_index("thigh_l"))
+
+    # 9. Get joint position at a specific frame
+    # 计算foot_l和ROOT的距离
+    root_coord = bvh.get_joint_position('pelvis', 0)
+    foot_l_coord = bvh.get_joint_position('foot_l', 0)
+    foot_r_coord = bvh.get_joint_position('foot_r', 0)
+    print(f"root_coord: {root_coord}, foot_l_coord: {foot_l_coord}, foot_r_coord: {foot_r_coord}")
+    # 计算foot_l和foot_r的中点
+    mid_coord = (foot_l_coord + foot_r_coord) / 2
+    print(f"mid_coord: {mid_coord}")
+    # 计算foot_l和ROOT的距离
+    distance = np.linalg.norm(root_coord - foot_l_coord)
+    print("foot_l和ROOT的距离:", distance)
+    # 计算foot_l和mid_coord的距离
+    distance = np.linalg.norm(foot_l_coord - mid_coord)
+    print("foot_l和mid_coord的距离:", distance)
+    # 计算foot_r和mid_coord的距离
+    distance = np.linalg.norm(foot_r_coord - mid_coord)
+    print("foot_r和mid_coord的距离:", distance)

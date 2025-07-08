@@ -189,6 +189,48 @@ class Bvh:
     def get_joint_index(self, name):
         return self.get_joints().index(self.get_joint(name))
 
+    # 获取关节对象列表
+    def get_joint_path(self, name):
+        path = []
+        node = self.get_joint(name)
+        while node and node != self.root:
+            path.insert(0, node)
+            node = node.parent
+        return path
+
+    # 获取关节位置
+    def get_joint_position(self, name, frame_idx):
+        import numpy as np
+        path = self.get_joint_path(name)
+        transform = np.eye(4)
+        for node in path:
+            offset = np.array(self.joint_offset(node.name))
+            mat = np.eye(4)
+            mat[:3, 3] = offset
+
+            # 根节点平移
+            if self.joint_parent(node.name) is None:
+                channels = ['Xposition', 'Yposition', 'Zposition']
+                t = np.array([self.frame_joint_channel(frame_idx, node.name, ch) for ch in channels])
+                mat[:3, 3] += t
+
+            # 旋转
+            rot_channels = [ch for ch in self.joint_channels(node.name) if 'rotation' in ch]
+            rot_axes = [ch[0].lower() for ch in rot_channels]
+            rot_angles = [np.deg2rad(self.frame_joint_channel(frame_idx, node.name, ch)) for ch in rot_channels]
+            for axis, angle in zip(rot_axes[::-1], rot_angles[::-1]):
+                r = np.eye(4)
+                c, s = np.cos(angle), np.sin(angle)
+                if axis == 'x':
+                    r[1:3, 1:3] = [[c, -s], [s, c]]
+                elif axis == 'y':
+                    r[::2, ::2] = [[c, s], [-s, c]]
+                elif axis == 'z':
+                    r[0:2, 0:2] = [[c, -s], [s, c]]
+                mat = mat @ r
+            transform = transform @ mat
+        return transform[:3, 3]
+
     # 获取关节对象
     def get_joint(self, name):
         found = self.search('ROOT', name)
