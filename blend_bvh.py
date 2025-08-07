@@ -57,39 +57,47 @@ def get_channels(bvh):
             rot_info[name] = (idxs, seq)
     
     result = (pos_idx, rot_info)
+    # bone_info = {
+    #     "root_position": pos_idx,
+    #     "rot_info": rot_info
+    # }
+    # # 将骨骼信息写入JSON文件
+    # with open('bone_info.json', 'w', encoding='utf-8') as f:
+    #     json.dump(bone_info, f, ensure_ascii=False, indent=4)
+    # print(f"骨骼信息已保存到 bone_info.json")
     _channel_cache[bvh_id] = result
     return result
 
-def blend_bvh(bvh_a, bvh_b, out_path, t_sec=0.5, fps=60): # 移除了类型提示
+def blend_bvh(primary_bvh, secondary_bvh, out_path, t_sec=0.5, fps=60): # 移除了类型提示
     """BVH动作混合主函数"""
-    bvh_a_path, a_range = bvh_a
-    bvh_b_path, b_range = bvh_b
+    primary_bvh_file_path, primary_frame_range = primary_bvh
+    secondary_bvh_file_path, secondary_frame_range = secondary_bvh
     # 加载BVH文件
-    get_bvh_a = get_bvh(bvh_a_path)
-    get_bvh_b = get_bvh(bvh_b_path)
+    load_primary_bvh = get_bvh(primary_bvh_file_path)
+    load_secondary_bvh = get_bvh(secondary_bvh_file_path)
     
     # 检查骨架一致性
-    if [j.name for j in get_bvh_a.get_joints()] != [j.name for j in get_bvh_b.get_joints()]:
+    if [j.name for j in load_primary_bvh.get_joints()] != [j.name for j in load_secondary_bvh.get_joints()]:
         raise ValueError("骨架不一致")
 
-    if not a_range:
-        a_range = [0, len(get_bvh_a.frames) - 1]
-    if not b_range:
-        b_range = [0, len(get_bvh_b.frames) - 1]
+    if not primary_frame_range:
+        primary_frame_range = [0, len(load_primary_bvh.frames) - 1]
+    if not secondary_frame_range:
+        secondary_frame_range = [0, len(load_secondary_bvh.frames) - 1]
 
-    a_start, a_end = a_range[0], a_range[1]
-    b_start, b_end = b_range[0], b_range[1]
+    primary_frame_start, primary_frame_end = primary_frame_range[0], primary_frame_range[1]
+    secondary_frame_start, secondary_frame_end = secondary_frame_range[0], secondary_frame_range[1]
     
-    frames_a_str = get_bvh_a.frames[a_start : a_end+1]
-    frames_b_str = get_bvh_b.frames[b_start : b_end+1]
+    primary_frames = load_primary_bvh.frames[primary_frame_start : primary_frame_end+1]
+    secondary_frames = load_secondary_bvh.frames[secondary_frame_start : secondary_frame_end+1]
     
-    frames_a = np.array(frames_a_str, dtype=float)
-    frames_b = np.array(frames_b_str, dtype=float)
-    print(f"BVH A 帧数: {frames_a.shape[0]}, BVH B 帧数: {frames_b.shape[0]}")
+    primary_animation_frames = np.array(primary_frames, dtype=float)
+    secondary_animation_frames = np.array(secondary_frames, dtype=float)
+    print(f"BVH A 帧数: {primary_animation_frames.shape[0]}, BVH B 帧数: {secondary_animation_frames.shape[0]}")
 
     # 判断frames_a和frames_b shape是否一致
-    if frames_a.shape[1] != frames_b.shape[1]:
-        print(f"{bvh_a_path}帧通道数: {frames_a.shape[1]}, {bvh_b_path}帧通道数: {frames_b.shape[1]}")
+    if primary_animation_frames.shape[1] != secondary_animation_frames.shape[1]:
+        print(f"{primary_bvh_file_path}帧通道数: {primary_animation_frames.shape[1]}, {secondary_bvh_file_path}帧通道数: {secondary_animation_frames.shape[1]}")
         raise ValueError("BVH A 和 BVH B 的帧通道数不一致, 无法进行混合。")
     
     # 获取混合帧数
@@ -100,52 +108,62 @@ def blend_bvh(bvh_a, bvh_b, out_path, t_sec=0.5, fps=60): # 移除了类型提�
     if n_blend <= 0:
         print("警告: 过渡时间为0或帧数不足，不生成过渡帧。")
         # 如果没有过渡帧，直接拼接A和B（如果B存在）
-        if frames_b.size > 0:
-            all_frames_np = np.vstack([frames_a, frames_b])
+        if secondary_animation_frames.size > 0:
+            all_frames_np = np.vstack([primary_animation_frames, secondary_animation_frames])
         else:
-            all_frames_np = frames_a
+            all_frames_np = primary_animation_frames
     else:
         # 获取通道索引
-        pos_idx, rot_info = get_channels(get_bvh_a) # pos_idx 是一个包含根节点位置通道索引的列表
+        pos_idx, rot_info = get_channels(load_primary_bvh) # pos_idx 是一个包含根节点位置通道索引的列表
         
         # 准备关键帧
-        frame_a_last = frames_a[-1]  # A尾帧 (1D NumPy array)
-        frame_b_first = frames_b[0]   # B首帧 (1D NumPy array)
+        primary_last_frame = primary_animation_frames[-1]  # A尾帧 (1D NumPy array)
+        secondary_start_frame = secondary_animation_frames[0]   # B首帧 (1D NumPy array)
         
         # 预分配过渡帧内存
-        blend_frames = np.empty((n_blend, len(frame_a_last)), dtype=float)
+        blend_frames = np.empty((n_blend, len(primary_last_frame)), dtype=float)
         
-        # 创建旋转插值器
+        # 创建旋转插值器（优化版本）
         interpolators = {}
         for name, (idxs, seq) in rot_info.items():
-            eul_a = frame_a_last[idxs] 
-            eul_b = frame_b_first[idxs]
+            eul_a = primary_last_frame[idxs] 
+            eul_b = secondary_start_frame[idxs]
             
-            quat_a = R.from_euler(seq, eul_a, degrees=True)
-            quat_b = R.from_euler(seq, eul_b, degrees=True)
+            # 直接创建四元数，避免重复的quat()调用
+            quat_a = R.from_euler(seq, eul_a, degrees=True).as_quat()
+            quat_b = R.from_euler(seq, eul_b, degrees=True).as_quat()
             
-            interpolators[name] = (
-                Slerp([0, 1], R.from_quat([quat_a.as_quat(), quat_b.as_quat()])),
-                idxs, # idxs 是一个包含特定关节旋转通道索引的列表
-                seq
-            )
-        
-        # 生成过渡帧
-        for i in range(n_blend):
-            t = (i + 1) / (n_blend + 1)  # 插值因子
-            current_blend_frame_view = blend_frames[i] # 获取当前过渡帧的视图
-            
-            # 将A的最后一帧作为当前过渡帧的基础
-            current_blend_frame_view[:] = frame_a_last
-            
-            # 根位移线性插值 (向量化)
-            current_blend_frame_view[pos_idx] = (1-t) * frame_a_last[pos_idx] + t * frame_b_first[pos_idx]
-            
-            # 关节旋转球面插值 (向量化赋值)
-            for name, (slerp_obj, joint_idxs, joint_seq) in interpolators.items():
-                current_blend_frame_view[joint_idxs] = slerp_obj([t])[0].as_euler(joint_seq, degrees=True)
+            # 预计算插值器，避免在循环中重复创建
+            slerp_obj = Slerp([0, 1], R.from_quat([quat_a, quat_b]))
+            interpolators[name] = (slerp_obj, idxs, seq)
 
-        return blend_frames, get_bvh_a, frames_a, frames_b
+        # 预计算插值时间点和根位移插值
+        t_values = np.linspace(1/(n_blend + 1), n_blend/(n_blend + 1), n_blend)
+        pos_a = primary_last_frame[pos_idx]
+        pos_b = secondary_start_frame[pos_idx]
+        
+        # 向量化根位移插值预计算 (n_blend x 3)
+        pos_interpolated = np.outer(1 - t_values, pos_a) + np.outer(t_values, pos_b)
+
+        # 生成过渡帧（向量化优化版本）
+        for i, t in enumerate(t_values):
+            current_blend_frame_view = blend_frames[i]
+            
+            # 复制基础帧
+            current_blend_frame_view[:] = primary_last_frame
+            
+            # 直接赋值预计算的位移插值
+            current_blend_frame_view[pos_idx] = pos_interpolated[i]
+            
+            # 批量处理旋转插值
+            for slerp_obj, joint_idxs, joint_seq in interpolators.values():
+                # 使用单个标量t而非数组[t]
+                current_blend_frame_view[joint_idxs] = slerp_obj(t).as_euler(joint_seq, degrees=True)
+
+        return blend_frames, load_primary_bvh, primary_animation_frames, secondary_animation_frames
+
+        # all_frames_np = np.vstack([frames_a, blend_frames, frames_b])
+
 
 if __name__ == "__main__":
     idle_bvh = ('./tests/idle.bvh', [0, 1])
@@ -157,6 +175,4 @@ if __name__ == "__main__":
     blend_frames, load_primary_bvh, primary_animation_frames, secondary_animation_frames = blend_bvh(idle_bvh, target_bvh, out_path, t_sec, fps)
     print(f"混合帧数: {blend_frames.shape[0]}")
     total_frames = np.vstack([primary_animation_frames, blend_frames, secondary_animation_frames])
-    print(f"总帧数: {total_frames.shape[0]}")
-    # 将混合帧写入BVH文件
     write_bvh(load_primary_bvh, out_path, total_frames)
