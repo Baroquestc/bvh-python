@@ -1,4 +1,4 @@
-from bvh import Bvh
+from utils.bvh import Bvh
 from pathlib import Path
 import numpy as np
 
@@ -10,8 +10,8 @@ if __name__ == "__main__":
     print("Number of frames:", bvh.nframes)
 
     # 保存为新的BVH文件
-    # output_path = Path('./output.bvh')
-    # output_path.write_text(bvh.as_bvh(), encoding='utf-8')
+    output_path = Path('./output.bvh')
+    output_path.write_text(bvh.as_bvh(), encoding='utf-8')
     
     joint_names = bvh.get_joints_names()
     print("length of joint names:", len(joint_names))
