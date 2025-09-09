@@ -3,13 +3,13 @@
 批量约束 BVH 中 Head 的 Yrotation ∈ [‑14, 0]°  
 基于第三方库  bvh‑python（pip install bvh）  
 """  
-
+import sys 
 import argparse  
-import sys  
 from pathlib import Path  
 
-from bvh import Bvh             
-from tqdm import tqdm             
+from utils.bvh import Bvh             
+from tqdm import tqdm
+from utils.helpers import logger             
 
 JOINT_NAME  = "head"  
 # JOINT_NAME  = "pelvis"  
@@ -49,12 +49,9 @@ def process_one(src: Path, dst: Path) -> None:
     
     print(f"[完成] {src.name}")
 
-def main():  
-    parser = argparse.ArgumentParser(description="批量约束 BVH Head.Yrotation")  
-    parser.add_argument("--src", required=True, help="输入目录")  
-    parser.add_argument("--dst", required=True, help="输出目录（自动创建）")  
-    parser.add_argument("--ext", default="bvh", help="扩展名过滤，默认 bvh")  
-    args = parser.parse_args()  
+def main(args):  
+    log = logger(args.logfile)
+    log.info("python {} {}".format(__file__, " ".join([f"--{k} {v}" for k, v in vars(args).items()])))
 
     src_dir, dst_dir = Path(args.src), Path(args.dst)  
     if not src_dir.is_dir():  
@@ -72,4 +69,10 @@ def main():
     print(f"\n全部完成，共处理 {len(bvh_files)} 个文件，输出至 {dst_dir.resolve()}")  
 
 if __name__ == "__main__":  
-    main()
+    parser = argparse.ArgumentParser(description="批量约束 BVH Head.Yrotation")
+    parser.add_argument("-log", "--logfile", default="./log/02_batch_clamp_head_y.log", type=str, help="log file")  
+    parser.add_argument("--src", required=True, help="输入目录")  
+    parser.add_argument("--dst", required=True, help="输出目录（自动创建）")  
+    parser.add_argument("--ext", default="bvh", help="扩展名过滤，默认 bvh")  
+    args = parser.parse_args() 
+    main(args)
